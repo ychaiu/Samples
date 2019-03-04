@@ -3,22 +3,65 @@
 # Load CPAD nightly holdings layer
 # Include CFF 1
 # Exclude in this order
-	# No Access, Restricted, Unknown
+	# No Access Access
+	# Restricted Access
+	# Unknown Access
 	# Special Use: Golf Course, Cemetery, HOA, JUA
 	# Planned Parks
 # Check that there are no parks with CFF 2
 
 import geopandas as gdp
 import pandas as pd
+import numpy as np
 import os
 
 # Declare filepaths here. Filename variables need to include the proper extension (".shp" or ".csv")
-in_parks = r"C:\Users\Gorgonio.GREENINFO\Desktop\cpad_nightly_holdings\CPAD_nightly_Holdings\CPAD_Nightly_Holdings.shp" # park file to process
-out_folder = r"C:\Users\Gorgonio.GREENINFO\Desktop\test" # folder for outputs
-out_parks_filename = "parks_final.shp" # filename of the output parks file
-out_removed_parks_filename = "removed_final.shp" # filename of the removed parks
-out_stats_filename = "stats_final.csv" # filename of the stats log
 
+# park file to process
+in_parks = r"C:\Users\Gorgonio.GREENINFO\Desktop\cpad_nightly_holdings\CPAD_nightly_Holdings\CPAD_Nightly_Holdings.shp" 
+
+# folder for outputs
+out_folder = r"C:\Users\Gorgonio.GREENINFO\Desktop\test" 
+
+# filename of the output parks file
+out_parks_filename = "parks_final.shp" 
+
+# filename of the removed parks
+out_removed_parks_filename = "removed_final.shp" 
+
+# filename of the stats log
+out_stats_filename = "stats_final.csv" 
+
+
+exclude_queries = [
+	['ACCESS_TYP == "No Public Access"', "No Public Access"],
+	['ACCESS_TYP == "Restricted Access"', "Restricted Access"],
+	['ACCESS_TYP == "Unknown Access"', "Unknown Access"],
+	['SPEC_USE == "Golf Course"| SPEC_USE == "Cemetery"| SPEC_USE == "HOA"|SPEC_USE == "School JUA"', "Special Use"],
+	['SPEC_USE == "Planned Park"', "Planned Park"]
+]
+
+def query_add_fields(dataframe, query, reason_value, action_value):
+	"""Query input dataframe, add reason and action fields and populate."""
+
+	df_query = dataframe.query(query)
+	df_query.loc[:, 'REASON'] = reason_value
+	df_query.loc[:, 'ACTION'] = action_value
+	return df_query
+
+def calculate_stats(stats_table, dataframe, reason_value):
+	"""Calculate stats for each round of query."""
+
+	if stats_table['ROUND'].empty:
+		round_num = 1
+	else:
+		round_num = stats_table['ROUND'].max() + 1
+
+	count = dataframe.shape[0]
+	stats_table = stats_table.append({'ROUND':round_num,'REASON_REMOVED': reason_value, 'COUNT': count}, ignore_index=True, sort=False)
+
+	print(stats_table)
+	return stats_table
 
 def exclude_parks(park_file):
 	"""Iterate through park file and exclude records. Generate a shp and stats for excluded holdings."""
@@ -30,69 +73,17 @@ def exclude_parks(park_file):
 	stats_columns = ['ROUND', 'REASON_REMOVED', 'COUNT']
 	stats = pd.DataFrame(columns=stats_columns)
 
-	# Exclude holdings where access is no public, restricted, or unknown.
-	print("Excluding access")
+	# read park_file input as a geopandas dataframe
 	data = gdp.read_file(park_file)
-	data_access_query = data.query('ACCESS_TYP == "No Public Access"| ACCESS_TYP == "Restricted Access"| ACCESS_TYP == "Unknown Access"')
-	data_access_query.loc[:,'REASON'] = "Access"
-	data_access_query.loc[:,'ACTION'] = "None"
-	removed = removed.append(data_access_query, ignore_index=True)
 
-	print("Calculating stats for access query")
-	if stats['ROUND'].empty:
-		round_num = 1
-	else:
-		round_num = stats['ROUND'].max() + 1
+	for query in exclude_queries:
+		data_queried = data.query(query[0])
+		data_queried = query_add_fields(data_queried, query[0], query[1], "None")
+		removed = removed.append(data_queried, ignore_index = True)
+		stats = calculate_stats(stats, data_queried, query[1])
+		print("Finished excluding {}".format(query[1]))
+		data = data.drop(data_queried.index)
 
-	queries = ['ACCESS_TYP == "No Public Access"', 'ACCESS_TYP == "Restricted Access"', 'ACCESS_TYP == "Unknown Access"']
-	for query in queries:
-		data_access_stats = data_access_query.query(query)
-		count = data_access_stats.shape[0]
-		reason = data_access_stats.iloc[0]['ACCESS_TYP']
-		stats = stats.append({'ROUND':round_num,'REASON_REMOVED': reason, 'COUNT': count}, ignore_index=True)
-
-	print("Removing parks by access")
-	data = data.drop(data_access_query.index)
-
-	# Exclude holdings where special use is golf course, cemetery, JUA, or HOA
-	print("Excluding special use")
-	data_spec_use_query = data.query('SPEC_USE == "Golf Course"| SPEC_USE == "Cemetery"| SPEC_USE == "HOA"|SPEC_USE == "School JUA"')
-	data_spec_use_query.loc[:, 'REASON'] = "Special Use"
-	data_spec_use_query.loc[:, 'ACTION'] = "None"
-	data_spec_use_query.loc[(data_spec_use_query['SPEC_USE'] == "HOA") | (data_spec_use_query['SPEC_USE'] == "School JUA"), 'ACTION'] = "CPAD review needed. Access should be restricted."
-	removed = removed.append(data_spec_use_query, ignore_index=True, sort=False)
-
-	print("Calculating stats for special use query")
-	if stats['ROUND'].empty:
-		round_num = 1
-	else:
-		round_num = stats['ROUND'].max() + 1
-	count = data_spec_use_query.shape[0]
-	reason = "Special Use"
-	stats = stats.append({'ROUND':round_num,'REASON_REMOVED': reason, 'COUNT': count}, ignore_index=True, sort=False)
- 
- 	print("Removing parks by special use")
-	data = data.drop(data_spec_use_query.index)
-
-	# Exclude planned parks
-	data_pp_query= data.query('SPEC_USE == "Planned Park"')
-	data_pp_query.loc[:, 'REASON'] = "Planned Park"
-	data_pp_query.loc[:, 'ACTION'] = "None"
-	removed = removed.append(data_pp_query, ignore_index=True, sort=False)
-
-	print("Calculating stats for planned park query")
-	if stats['ROUND'].empty:
-	    round_num = 1
-	else:
-	    round_num = stats['ROUND'].max() + 1
-	count = data_pp_query.shape[0]
-	reason = "Planned Park"
-	stats = stats.append({'ROUND':round_num,'REASON_REMOVED': reason, 'COUNT': count}, ignore_index=True, sort=False)
-
-	print("Removing parks by planned parks")
-	data = data.drop(data_pp_query.index)
-
-	### 
 	out_parks_path = os.path.join(out_folder, out_parks_filename)
 	out_removed_parks_path = os.path.join(out_folder, out_removed_parks_filename)
 	out_stats_path = os.path.join(out_folder, out_stats_filename)
